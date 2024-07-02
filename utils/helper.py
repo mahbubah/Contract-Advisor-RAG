@@ -2,24 +2,26 @@ import chromadb
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter, SentenceTransformersTokenTextSplitter
 import numpy as np
-from pypdf import PdfReader
+from docx import Document
 from tqdm import tqdm
 
 
-def _read_pdf(filename):
-    reader = PdfReader(filename)
-    
-    pdf_texts = [p.extract_text().strip() for p in reader.pages]
+def _read_doc(filename):
 
-    # Filter the empty strings
-    pdf_texts = [text for text in pdf_texts if text]
-    return pdf_texts
+    doc = Document(filename)
+
+    docx_texts = [paragraph.text.strip() for paragraph in doc.paragraphs]
+
+    docx_texts = [text for text in docx_texts if text]
+    return docx_texts
+
+
 
 
 def _chunk_texts(texts):
     character_splitter = RecursiveCharacterTextSplitter(
         separators=["\n\n", "\n", ". ", " ", ""],
-        chunk_size=1000,
+        chunk_size=500,
         chunk_overlap=0
     )
     character_split_texts = character_splitter.split_text('\n\n'.join(texts))
@@ -34,7 +36,7 @@ def _chunk_texts(texts):
 
 
 def load_chroma(filename, collection_name, embedding_function):
-    texts = _read_pdf(filename)
+    texts = _read_doc(filename)
     chunks = _chunk_texts(texts)
 
     chroma_cliet = chromadb.Client()
