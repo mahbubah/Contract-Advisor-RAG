@@ -1,5 +1,5 @@
-import os
 from flask import Flask, request, jsonify
+import os
 from docx import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter, SentenceTransformersTokenTextSplitter
 from chromadb import Client
@@ -14,7 +14,7 @@ from werkzeug.utils import secure_filename
 _ = load_dotenv(find_dotenv())
 
 # Set OpenAI API key
-openai.api_key = os.getenv('OPENAI_API_KEY')
+openai.api_key = os.environ.get('OPENAI_API_KEY')
 
 # Initialize ChromaDB client
 chroma_client = Client()
@@ -42,26 +42,46 @@ def preprocess_document(docx_path):
 
     return token_split_texts
 
-# Function to create or retrieve ChromaDB collection
-def get_or_create_collection(collection_name, documents):
-    try:
-        # Try to create a new collection
-        embedding_function = SentenceTransformerEmbeddingFunction()
-        collection = chroma_client.create_collection(collection_name, embedding_function=embedding_function)
-        ids = [str(i) for i in range(len(documents))]
-        collection.add(ids=ids, documents=documents)
-        return collection
-    except Exception as e:
-        # Collection already exists or other error
-        print(f"Error creating collection: {e}")
+# Endpoint for uploading a document
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part in the request'}), 400
+    
+    file = request.files['file']
+
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+
+    if file:
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
+
         try:
-            # Try to retrieve existing collection
-            collection = chroma_client.get_collection(collection_name)
-            return collection
+            # Preprocess the uploaded document
+            documents = preprocess_document(filepath)
+
+            # Embedding function
+            embedding_function = SentenceTransformerEmbeddingFunction()
+
+            # Create ChromaDB collection and add documents
+            chroma_collection = chroma_client.create_collection("Contract", embedding_function=embedding_function)
+            ids = [str(i) for i in range(len(documents))]
+            chroma_collection.add(ids=ids, documents=documents)
+
+            return jsonify({'message': 'Document uploaded and processed successfully'}), 200
+
         except Exception as e:
-            # Handle error when collection cannot be retrieved
-            print(f"Error retrieving collection: {e}")
-            raise
+            return jsonify({'error': str(e)}), 500
+
+    return jsonify({'error': 'File type not allowed'}), 400
+
+# Function to query documents
+def query_documents(query, collection):
+    results = collection.query(query_texts=[query], n_results=5)
+    retrieved_documents = results['documents'][0]
+    return retrieved_documents
 
 # Function to augment query with multiple questions
 def augment_multiple_query(query, model="gpt-3.5-turbo"):
@@ -86,65 +106,59 @@ def augment_multiple_query(query, model="gpt-3.5-turbo"):
     return content
 
 # Function to run RAG pipeline
-def rag_with_query_expansion(original_query, documents, model="gpt-3.5-turbo"):
+def rag_with_query_expansion(original_query, collection, model="gpt-3.5-turbo"):
     # Expand the original query
     expanded_queries = augment_multiple_query(original_query, model=model)[:5]  # Limit to top 5 expanded queries
 
     # Include the original query in the list of queries
     queries = [original_query] + expanded_queries
 
-    # Create or retrieve ChromaDB collection "Contract"
-    try:
-        chroma_collection = get_or_create_collection("Contract", documents)
-    except Exception as e:
-        return f"Error creating/retrieving collection: {e}"
-
     # Query ChromaDB for relevant documents
-    try:
-        results = chroma_collection.query(query_texts=queries, n_results=5, include=['documents'])
-        retrieved_documents = results['documents']
-    except Exception as e:
-        return f"Error querying collection: {e}"
+    results = collection.query(query_texts=queries, n_results=5, include=['documents'])
+    retrieved_documents = results['documents']
 
     # Deduplicate the retrieved documents
     unique_documents = set()
-    for docs in retrieved_documents:
-        for doc in docs:
-            unique_documents.add(doc)
+    for documents in retrieved_documents:
+        for document in documents:
+            unique_documents.add(document)
 
+    # Convert back to list for indexing
     unique_documents = list(unique_documents)
 
     # Rank documents based on relevance to each query
-    try:
-        cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
-        pairs = [[query, doc] for doc in unique_documents for query in queries]
-        scores = cross_encoder.predict(pairs)
+    cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+    pairs = [[query, doc] for doc in unique_documents for query in queries]
+    scores = cross_encoder.predict(pairs)
 
-        avg_scores = np.mean(np.array(scores).reshape(len(queries), -1), axis=0)
-        ranked_indices = np.argsort(avg_scores)[::-1]
-        ranked_documents = [unique_documents[i] for i in ranked_indices]
-
-        information = "\n\n".join(ranked_documents[:5])  # Use top 5 ranked documents
-    except Exception as e:
-        return f"Error ranking documents: {e}"
+    # Sort documents based on average score across all queries
+    avg_scores = np.mean(np.array(scores).reshape(len(queries), -1), axis=0)
+    ranked_indices = np.argsort(avg_scores)[::-1]
+    ranked_documents = [unique_documents[i] for i in ranked_indices]
 
     # Generate answer using RAG with ranked documents
+    information = "\n\n".join(ranked_documents[:5])  # Use top 5 ranked documents
+    
     messages = [
-        {"role": "system",
-         "content": "You are a helpful expert legal contract advisor assistant. Your users are asking questions about information contained in the contract."
-                    "You will be shown the user's question, and the relevant information from the contract. Answer the user's question using only this information."},
+        {
+            "role": "system",
+            "content": "You are a helpful expert legal contract advisor assistant. Your users are asking questions about information contained in the contract."
+                       "You will be shown the user's question, and the relevant information from the contract. Answer the user's question using only this information."
+        },
         {"role": "user", "content": f"Question: {original_query}. \n Information: {information}"},
-        {"role": "system",
-         "content": "Provide concise answers without additional explanation unless explicitly requested."
-                    "Identify questions that require a simple yes or no response, and Provide concise answers without additional explanation unless explicitly requested."}
+        {
+        "role": "system",
+        "content": "Provide concise answers without additional explanation unless explicitly requested."
+                    "Identify questions that require a simple yes or no response, and Provide concise answers without additional explanation unless explicitly requested."
+        }
     ]
-
-    try:
-        response = openai.ChatCompletion.create(model=model, messages=messages)
-        content = response.choices[0].message['content']
-        return content
-    except Exception as e:
-        return f"Error generating response: {e}"
+    
+    response = openai.ChatCompletion.create(
+        model=model,
+        messages=messages,
+    )
+    content = response.choices[0].message['content']
+    return content
 
 # Endpoint for querying using RAG pipeline
 @app.route('/query', methods=['POST'])
@@ -156,49 +170,17 @@ def query_endpoint():
         return jsonify({'error': "Query parameter 'query' is missing or empty"}), 400
 
     try:
-        response = rag_with_query_expansion(query, documents)
+        # Retrieve or create ChromaDB collection "Contract"
+        embedding_function = SentenceTransformerEmbeddingFunction()
+        chroma_collection = chroma_client.get_collection("Contract", embedding_function=embedding_function)
+
+        # Execute RAG pipeline with user query
+        response = rag_with_query_expansion(query, chroma_collection)
         return jsonify({'response': response}), 200
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# Endpoint for file upload
-@app.route('/upload', methods=['POST'])
-def upload_file():
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file part in the request'}), 400
-    
-    file = request.files['file']
-
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
-
-    if file:
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
-
-        try:
-            # Preprocess the uploaded document
-            documents = preprocess_document(filepath)
-
-            # Debugging: Log the preprocessed documents
-            app.logger.info(f"Preprocessed documents: {documents}")
-
-            # Execute RAG pipeline
-            response = rag_with_query_expansion("", documents)  # Empty query string for file upload
-            
-            # Debugging: Log the response generated
-            app.logger.info(f"Generated response: {response}")
-
-            # Return response
-            return jsonify({'response': response}), 200
-
-        except Exception as e:
-            # Debugging: Log any exception raised during processing
-            app.logger.error(f"Error processing file upload: {str(e)}")
-            return jsonify({'error': str(e)}), 500
-
-    return jsonify({'error': 'File type not allowed'}), 400
-
-if __name__ == '__main__':
+# Main script
+if __name__ == "__main__":
     app.run(debug=True)
