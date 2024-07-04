@@ -8,6 +8,9 @@ import openai
 from sentence_transformers import CrossEncoder
 import numpy as np
 import logging
+import psycopg2
+from flask import request
+from werkzeug.utils import secure_filename 
 
 # Load environment variables
 _ = load_dotenv(find_dotenv())
@@ -17,10 +20,6 @@ openai.api_key = os.environ['OPENAI_API_KEY']
 
 # Initialize ChromaDB client
 chroma_client = Client()
-
-import os
-from werkzeug.utils import secure_filename
-from flask import request
 
 # Define the upload folder (where uploaded files will be stored)
 UPLOAD_FOLDER = 'uploads'
@@ -48,11 +47,12 @@ def save_uploaded_file():
     else:
         raise ValueError('Invalid file extension or file format')
 
-
-def preprocess_document(docx_path):
+def preprocess_document_and_save(docx_path):
     try:
         doc = Document(docx_path)
         docx_texts = [paragraph.text.strip() for paragraph in doc.paragraphs if paragraph.text.strip()]
+
+        save_to_postgres(os.path.basename(docx_path), docx_texts)
 
         character_splitter = RecursiveCharacterTextSplitter(separators=["\n\n", "\n", ". ", " ", ""], chunk_size=500, chunk_overlap=0)
         character_split_texts = character_splitter.split_text('\n\n'.join(docx_texts))
@@ -63,8 +63,44 @@ def preprocess_document(docx_path):
             token_split_texts += token_splitter.split_text(text)
 
         return token_split_texts
+
     except Exception as e:
         logging.error(f"Error processing document {docx_path}: {str(e)}")
+        raise e
+
+def save_to_postgres(filename, docx_texts):
+    """Save documents to PostgreSQL database."""
+    try:
+        conn = psycopg2.connect(os.environ['DATABASE_URL'])
+        cur = conn.cursor()
+
+        for text in docx_texts:
+            cur.execute("INSERT INTO documents (filename, content) VALUES (%s, %s)", (filename, text))
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+    except Exception as e:
+        logging.error(f"Error saving documents to PostgreSQL: {str(e)}")
+        raise e
+
+def fetch_from_postgres(filename):
+    """Fetch documents from PostgreSQL database."""
+    try:
+        conn = psycopg2.connect(os.environ['DATABASE_URL'])
+        cur = conn.cursor()
+
+        cur.execute("SELECT content FROM documents WHERE filename = %s", (filename,))
+        documents = [row[0] for row in cur.fetchall()]
+
+        cur.close()
+        conn.close()
+
+        return documents
+
+    except Exception as e:
+        logging.error(f"Error fetching documents from PostgreSQL: {str(e)}")
         raise e
 
 def create_chromadb_collection(collection_name, documents):
@@ -84,6 +120,7 @@ def create_chromadb_collection(collection_name, documents):
     except Exception as e:
         logging.error(f"Error creating ChromaDB collection: {str(e)}")
         raise e
+    
 
 def query_chromadb(collection, query):
     """
