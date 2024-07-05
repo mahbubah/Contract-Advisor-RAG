@@ -1,58 +1,67 @@
 import streamlit as st
 import requests
+import os
 
-# Function to upload a document via Flask API
-def upload_document(file):
+# Set up API endpoint URLs
+UPLOAD_URL = "http://localhost:5000/upload"
+QUERY_URL = "http://localhost:5000/query"
+
+# Function to upload file to Flask API
+def upload_file(file):
     files = {'file': file}
-    response = requests.post('http://localhost:5000/api/upload', files=files)
-    return response
+    try:
+        response = requests.post(UPLOAD_URL, files=files)
+        if response.status_code == 200:
+            st.success("Document uploaded and processed successfully!")
+        else:
+            st.error(f"Upload failed with error: {response.json()['error']}")
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error during upload: {e}")
 
-# Function to query documents via Flask API
-def query_documents(query, filename):
-    data = {'query': query, 'filename': filename}
-    response = requests.post('http://localhost:5000/api/query', json=data)
-    return response
+# Function to query document using Flask API
+def query_document(query):
+    payload = {'query': query}
+    try:
+        response = requests.post(QUERY_URL, json=payload)
+        if response.status_code == 200:
+            return response.json()['response']
+        else:
+            st.error(f"Query failed with error: {response.json()['error']}")
+            return None
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error during query: {e}")
+        return None
 
-# Function to format RAG answer for chatbot-like display
-def format_answer_for_chat(answer):
-    return f"Bot: {answer}"
-
-# Streamlit UI
+# Main Streamlit application
 def main():
-    st.title('Contract Advisor Chatbot (RAG)')
-    
-    st.sidebar.title('Upload Document')
-    uploaded_file = st.sidebar.file_uploader('Choose a .docx file', type=['docx'])
+    st.title("Contract Document Chatbot")
 
-    if uploaded_file is not None:
-        if st.sidebar.button('Upload'):
-            with st.spinner('Uploading and processing document...'):
-                response = upload_document(uploaded_file)
+    # Initialize chat history
+    if 'chat_history' not in st.session_state:
+        st.session_state.chat_history = []
 
-            if response.status_code == 200:
-                data = response.json()
-                st.sidebar.success(data['message'])
-                st.sidebar.json(data)
+    # File upload section
+    st.header("Upload Document")
+    uploaded_file = st.file_uploader("Choose a document (.docx)", type="docx")
 
-                # Query section after successful upload
-                st.header('Chat with Contract Advisor')
-                query = st.text_input('You:')
+    if st.button("Upload") and uploaded_file:
+        upload_file(uploaded_file)
 
-                if st.button('Send'):
-                    if query:
-                        with st.spinner('Querying documents...'):
-                            query_response = query_documents(query, data['filename'])
+    # Query section
+    st.header("Ask a Question")
+    query = st.text_area("Enter your question")
 
-                        if query_response.status_code == 200:
-                            answer = query_response.json().get('answer')
-                            if answer:
-                                st.text(format_answer_for_chat(answer))
-                            else:
-                                st.warning('No answer found.')
-                        else:
-                            st.error(f'Error {query_response.status_code}: {query_response.json()["error"]}')
-                    else:
-                        st.warning('Please enter a query.')
+    if st.button("Ask") and query:
+        response = query_document(query)
+        if response:
+            st.session_state.chat_history.append((query, response))
 
-if __name__ == '__main__':
+    # Display chat history
+    st.header("Chat History")
+    for idx, (q, a) in enumerate(st.session_state.chat_history):
+        st.text(f"Question {idx + 1}: {q}")
+        st.text(f"Answer {idx + 1}: {a}")
+        st.markdown("---")
+
+if __name__ == "__main__":
     main()
