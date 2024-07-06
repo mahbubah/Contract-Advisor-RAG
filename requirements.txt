@@ -3,3 +3,5 @@ langchain
 chromadb
 sentence_transformers
 openai
+weaviate-client
+ragas==0.1.8
