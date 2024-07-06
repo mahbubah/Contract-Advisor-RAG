@@ -3,8 +3,8 @@ This project is on build, evaluate and improve a RAG system for Contract Q&A (ch
 
 ## Installation
 
-    Fork the repository
-    Clone the repository you just forked using git clone
+Fork the repository
+Clone the repository you just forked using git clone
 
 In your terminal:
 
