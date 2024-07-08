@@ -1,11 +1,12 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS, cross_origin
 import os
 from docx import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter, SentenceTransformersTokenTextSplitter
 from chromadb import Client
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 from dotenv import load_dotenv, find_dotenv
-import openai
+from openai import OpenAI
 from sentence_transformers import CrossEncoder
 import numpy as np
 from werkzeug.utils import secure_filename
@@ -13,14 +14,16 @@ from werkzeug.utils import secure_filename
 # Load environment variables
 _ = load_dotenv(find_dotenv())
 
+
 # Set OpenAI API key
-openai.api_key = os.environ.get('OPENAI_API_KEY')
+client = OpenAI(api_key = os.getenv('OPENAI_API_KEY'))
 
 # Initialize ChromaDB client
 chroma_client = Client()
 
 # Initialize Flask application
 app = Flask(__name__)
+CORS(app)
 
 # Configure upload folder
 UPLOAD_FOLDER = 'uploads'
@@ -65,8 +68,11 @@ def upload_file():
             # Embedding function
             embedding_function = SentenceTransformerEmbeddingFunction()
 
-            # Create ChromaDB collection and add documents
+           
             chroma_collection = chroma_client.create_collection("Contract", embedding_function=embedding_function)
+            chroma_collection = chroma_client.get_collection("Contract", embedding_function=embedding_function)
+
+            # Add documents to the collection
             ids = [str(i) for i in range(len(documents))]
             chroma_collection.add(ids=ids, documents=documents)
 
@@ -97,11 +103,11 @@ def augment_multiple_query(query, model="gpt-3.5-turbo"):
         {"role": "user", "content": query}
     ]
 
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model=model,
         messages=messages,
     )
-    content = response.choices[0].message['content']
+    content = response.choices[0].message.content
     content = content.split("\n")
     return content
 
@@ -153,11 +159,11 @@ def rag_with_query_expansion(original_query, collection, model="gpt-3.5-turbo"):
         }
     ]
     
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model=model,
         messages=messages,
     )
-    content = response.choices[0].message['content']
+    content = response.choices[0].message.content
     return content
 
 # Endpoint for querying using RAG pipeline
