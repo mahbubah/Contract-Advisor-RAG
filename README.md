@@ -10,6 +10,8 @@ Build a RAG evaluation pipeline with RAGAS
 api/ : the backend connection
 notebooks/ : includes different implementations and visualizations
 utils/ : reusable python scripts
+frontend/ : the frontend implementation using react
+screenshots/ : screenshots of the project
 tests/: Includes unit and integration tests for the project.
 
 ## Installation
