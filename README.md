@@ -8,20 +8,29 @@ Build a RAG evaluation pipeline with RAGAS
 
 ## Project Structure
 api/ : the backend connection
+
 notebooks/ : includes different implementations and visualizations
+
 utils/ : reusable python scripts
+
 frontend/ : the frontend implementation using react
+
 screenshots/ : screenshots of the project
-tests/: Includes unit and integration tests for the project.
+
+test/: Includes unit and integration tests for the project.
 
 ## Installation
 
-git clone https://github.com/mahbubah/Contract-Advisor-RAG.git
+    git clone https://github.com/mahbubah/Contract-Advisor-RAG.git
 
 In your terminal:
 
     cd Contract-Advisor-RAG
     pip install -r requirements.txt
+
+Configure the environment
+
+Add your OPENAI_API_KEY to a .env file in the project root directory.
 
 ## License
 This project is licensed under the Apache License 2.0. See the LICENSE file for details.
