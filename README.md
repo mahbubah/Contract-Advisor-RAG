@@ -43,6 +43,7 @@ In your terminal:
 
     cd Contract-Advisor-RAG
     pip install -r requirements.txt
+    make up
 
 Configure the environment
 
